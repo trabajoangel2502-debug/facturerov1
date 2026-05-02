@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sistema de Facturación Oro/USD</title>
+    
+    <!-- Librería para PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        :root { --primary: #1e293b; --gold: #d4af37; --usd: #16a34a; --bg: #f1f5f9; }
+        body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: var(--bg); color: #334155; }
+        
+        .nav { display: flex; background: var(--primary); padding: 8px; position: sticky; top: 0; z-index: 100; }
+        .nav-btn { flex: 1; padding: 12px; border: none; background: none; color: #94a3b8; font-weight: bold; font-size: 14px; cursor: pointer; }
+        .nav-btn.active { color: white; background: rgba(255,255,255,0.1); border-radius: 8px; }
+
+        .content { padding: 15px; max-width: 700px; margin: auto; }
+        .page { display: none; }
+        .page.active { display: block; }
+
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .header { border-bottom: 2px solid #e2e8f0; margin-bottom: 15px; padding-bottom: 10px; }
+        
+        input, select { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { font-size: 11px; color: #64748b; text-align: left; padding: 8px; border-bottom: 2px solid #f1f5f9; }
+        td { padding: 12px 5px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
+
+        .currency-toggle { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: bold; align-items: center; }
+        .currency-toggle input { width: 22px; height: 22px; margin: 0; cursor: pointer; }
+
+        .total-section { background: #f8fafc; padding: 15px; border-radius: 10px; margin-top: 20px; border: 1px solid #e2e8f0; }
+        .total-row { display: flex; justify-content: space-between; font-weight: 800; font-size: 18px; }
+        
+        .btn-print { background: var(--primary); color: white; width: 100%; padding: 18px; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        
+        .config-item { background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid var(--gold); }
+    </style>
+</head>
+<body>
+
+<div class="nav">
+    <button class="nav-btn active" onclick="showPage('p-factura', this)">FACTURAR</button>
+    <button class="nav-btn" onclick="showPage('p-config', this)">PRECIOS</button>
+</div>
+
+<div class="content">
+    <div id="p-factura" class="page active">
+        <div class="card" id="area-pdf">
+            <div class="header">
+                <h2 style="margin:0; color: var(--primary)">RECIBO DE ENTREGA</h2>
+                <div style="display:flex; justify-content:space-between; font-size: 12px; margin-top:5px;">
+                    <span>Fecha: <b id="fecha-hoy"></b></span>
+                    <span>No: <b contenteditable="true">0001</b></span>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                <div><label><small>VENDEDOR</small></label><input type="text" id="vendedor" placeholder="Nombre"></div>
+                <div><label><small>COMPRADOR</small></label><input type="text" id="comprador" placeholder="Cliente"></div>
+            </div>
+
+            <select id="condicion" style="margin-bottom: 15px; font-weight: bold;">
+                <option value="PAGO INMEDIATO">PAGO INMEDIATO</option>
+                <option value="A CRÉDITO">A CRÉDITO</option>
+            </select>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>ITEM</th>
+                        <th style="text-align:center">CANT</th>
+                        <th style="text-align:center">PAGO EN</th>
+                        <th style="text-align:right">SUBTOTAL</th>
+                    </tr>
+                </thead>
+                <tbody id="tabla-body"></tbody>
+            </table>
+
+            <div class="total-section">
+                <div class="total-row" style="color: var(--usd);">
+                    <span>TOTAL USD:</span> <span id="t-usd">$0.00</span>
+                </div>
+                <div class="total-row" style="color: #b45309; margin-top: 10px;">
+                    <span>TOTAL ORO:</span> <span id="t-oro">0.000 gr</span>
+                </div>
+            </div>
+        </div>
+        <button class="btn-print" onclick="descargar()">GENERAR PDF</button>
+    </div>
+
+    <div id="p-config" class="page">
+        <h3 style="margin-top:0">Precios Unitarios</h3>
+        <div id="editor-precios"></div>
+    </div>
+</div>
+
+<script>
+    let inventario = JSON.parse(localStorage.getItem('fact_data_final')) || [
+        { id: 1, nombre: 'Saco', usd: 100.00, oro: 0.15 },
+        { id: 2, nombre: 'Mechas', usd: 50.00, oro: 0.08 },
+        { id: 3, nombre: 'Pistones', usd: 200.00, oro: 0.32 },
+        { id: 4, nombre: 'Pistones Eléctricos', usd: 250.00, oro: 0.40 },
+        { id: 5, nombre: 'Pasta', usd: 30.00, oro: 0.05 }
+    ];
+
+    function showPage(id, btn) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        btn.classList.add('active');
+    }
+
+    function renderApp() {
+        document.getElementById('fecha-hoy').innerText = new Date().toLocaleDateString();
+        const body = document.getElementById('tabla-body');
+        body.innerHTML = '';
+        inventario.forEach((item, i) => {
+            body.innerHTML += `
+                <tr>
+                    <td><b>${item.nombre}</b><br><small>$${item.usd} | ${item.oro}g</small></td>
+                    <td align="center"><input type="number" value="0" min="0" oninput="recalc()" class="in-cant" data-i="${i}" style="width:50px; text-align:center"></td>
+                    <td align="center">
+                        <div class="currency-toggle">
+                            <label><input type="checkbox" class="c-usd" onchange="recalc()" checked> $</label>
+                            <label><input type="checkbox" class="c-oro" onchange="recalc()"> Oro</label>
+                        </div>
+                    </td>
+                    <td align="right" style="font-size:11px">
+                        <div class="res-usd">$0.00</div>
+                        <div class="res-oro">0.000g</div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        const editor = document.getElementById('editor-precios');
+        editor.innerHTML = '';
+        inventario.forEach((item, i) => {
+            editor.innerHTML += `
+                <div class="config-item">
+                    <b>${item.nombre}</b>
+                    <div style="display:flex; gap:10px; margin-top:5px;">
+                        <input type="number" step="0.01" value="${item.usd}" onchange="updateInv(${i}, 'usd', this.value)">
+                        <input type="number" step="0.001" value="${item.oro}" onchange="updateInv(${i}, 'oro', this.value)">
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    function updateInv(i, key, val) {
+        inventario[i][key] = parseFloat(val) || 0;
+        localStorage.setItem('fact_data_final', JSON.stringify(inventario));
+        renderApp();
+        recalc();
+    }
+
+    function recalc() {
+        let totalUSD = 0;
+        let totalORO = 0;
+        const filas = document.querySelectorAll('#tabla-body tr');
+        filas.forEach((fila, i) => {
+            const cant = parseFloat(fila.querySelector('.in-cant').value) || 0;
+            const resUSD = fila.querySelector('.c-usd').checked ? (cant * inventario[i].usd) : 0;
+            const resORO = fila.querySelector('.c-oro').checked ? (cant * inventario[i].oro) : 0;
+            fila.querySelector('.res-usd').innerText = `$${resUSD.toFixed(2)}`;
+            fila.querySelector('.res-oro').innerText = `${resORO.toFixed(3)}g`;
+            totalUSD += resUSD; totalORO += resORO;
+        });
+        document.getElementById('t-usd').innerText = `$${totalUSD.toFixed(2)}`;
+        document.getElementById('t-oro').innerText = `${totalORO.toFixed(3)} gr`;
+    }
+
+    // FUNCIÓN CORREGIDA PARA IPHONE
+    function descargar() {
+        const element = document.getElementById('area-pdf');
+        const vendedor = document.getElementById('vendedor').value.trim().replace(/\s+/g, '_') || "Vendedor";
+        const comprador = document.getElementById('comprador').value.trim().replace(/\s+/g, '_') || "Cliente";
+        const d = new Date();
+        const fechaStr = `${d.getDate()}-${d.getMonth() + 1}-${d.getFullYear()}`;
+        const nombreArchivo = `${vendedor}_${comprador}_${fechaStr}.pdf`;
+
+        const opt = {
+            margin: 10,
+            filename: nombreArchivo,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 3, useCORS: true },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
+        
+        // En móviles, es más fiable abrir el PDF en una nueva pestaña para guardar
+        html2pdf().set(opt).from(element).toPdf().get('pdf').then(function (pdf) {
+            window.open(pdf.output('bloburl'), '_blank');
+        });
+    }
+
+    renderApp();
+</script>
+</body>
+</html>
